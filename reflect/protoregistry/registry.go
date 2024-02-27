@@ -175,6 +175,35 @@ func (r *Files) RegisterFile(file protoreflect.FileDescriptor) error {
 	return nil
 }
 
+func (r *Files) UpdateFile(file protoreflect.FileDescriptor) error {
+	if r == GlobalFiles {
+		globalMutex.Lock()
+		defer globalMutex.Unlock()
+	}
+	if r.descsByName == nil {
+		r.descsByName = map[protoreflect.FullName]interface{}{
+			"": &packageDescriptor{},
+		}
+		r.filesByPath = make(map[string][]protoreflect.FileDescriptor)
+	}
+	for name := file.Package(); name != ""; name = name.Parent() {
+		if r.descsByName[name] == nil {
+			r.descsByName[name] = &packageDescriptor{}
+		}
+	}
+	p := r.descsByName[file.Package()].(*packageDescriptor)
+	p.files = append(p.files, file)
+	rangeTopLevelDescriptors(file, func(d protoreflect.Descriptor) {
+		r.descsByName[d.FullName()] = d
+	})
+	path := file.Path()
+	if prev := r.filesByPath[path]; len(prev) == 0 {
+		r.numFiles++
+	}
+	r.filesByPath[path] = append(r.filesByPath[path], file)
+	return nil
+}
+
 // Several well-known types were hosted in the google.golang.org/genproto module
 // but were later moved to this module. To avoid a weak dependency on the
 // genproto module (and its relatively large set of transitive dependencies),
@@ -490,7 +519,7 @@ type (
 	extensionsByNumber  map[protoreflect.FieldNumber]protoreflect.ExtensionType
 )
 
-type registerFunc = func(string, protoreflect.Descriptor, interface{}) error
+type registerFunc = func(string, protoreflect.Descriptor, interface{}, *int) error
 
 // RegisterMessage registers the provided message type.
 //
@@ -505,11 +534,7 @@ func (r *Types) registerMessage(mt protoreflect.MessageType, register registerFu
 		defer globalMutex.Unlock()
 	}
 
-	if err := register("message", md, mt); err != nil {
-		return err
-	}
-	r.numMessages++
-	return nil
+	return register("message", md, mt, &r.numMessages)
 }
 
 func (r *Types) RegisterMessage(mt protoreflect.MessageType) error {
@@ -533,11 +558,7 @@ func (r *Types) registerEnum(et protoreflect.EnumType, register registerFunc) er
 		defer globalMutex.Unlock()
 	}
 
-	if err := register("enum", ed, et); err != nil {
-		return err
-	}
-	r.numEnums++
-	return nil
+	return register("enum", ed, et, &r.numEnums)
 }
 
 func (r *Types) RegisterEnum(et protoreflect.EnumType) error {
@@ -551,7 +572,7 @@ func (r *Types) UpdateEnum(et protoreflect.EnumType) error {
 // RegisterExtension registers the provided extension type.
 //
 // If a naming conflict occurs, the type is not registered and an error is returned.
-func (r *Types) registerExtension(xt protoreflect.ExtensionType, register registerFunc) error {
+func (r *Types) registerExtension(xt protoreflect.ExtensionType, register registerFunc, update bool) error {
 	// Under rare circumstances getting the descriptor might recursively
 	// examine the registry, so fetch it before locking.
 	//
@@ -566,7 +587,7 @@ func (r *Types) registerExtension(xt protoreflect.ExtensionType, register regist
 
 	field := xd.Number()
 	message := xd.ContainingMessage().FullName()
-	if prev := r.extensionsByMessage[message][field]; prev != nil {
+	if prev := r.extensionsByMessage[message][field]; !update && prev != nil {
 		err := errors.New("extension number %d is already registered on message %v", field, message)
 		err = amendErrorWithCaller(err, prev, xt)
 		if !(r == GlobalTypes && ignoreConflict(xd, err)) {
@@ -574,7 +595,7 @@ func (r *Types) registerExtension(xt protoreflect.ExtensionType, register regist
 		}
 	}
 
-	if err := register("extension", xd, xt); err != nil {
+	if err := register("extension", xd, xt, &r.numExtensions); err != nil {
 		return err
 	}
 	if r.extensionsByMessage == nil {
@@ -584,19 +605,18 @@ func (r *Types) registerExtension(xt protoreflect.ExtensionType, register regist
 		r.extensionsByMessage[message] = make(extensionsByNumber)
 	}
 	r.extensionsByMessage[message][field] = xt
-	r.numExtensions++
 	return nil
 }
 
 func (r *Types) RegisterExtension(xt protoreflect.ExtensionType) error {
-	return r.registerExtension(xt, r.register)
+	return r.registerExtension(xt, r.register, false)
 }
 
 func (r *Types) UpdateExtension(xt protoreflect.ExtensionType) error {
-	return r.registerExtension(xt, r.update)
+	return r.registerExtension(xt, r.update, true)
 }
 
-func (r *Types) register(kind string, desc protoreflect.Descriptor, typ interface{}) error {
+func (r *Types) register(kind string, desc protoreflect.Descriptor, typ interface{}, counter *int) error {
 	name := desc.FullName()
 	prev := r.typesByName[name]
 	if prev != nil {
@@ -610,13 +630,17 @@ func (r *Types) register(kind string, desc protoreflect.Descriptor, typ interfac
 		r.typesByName = make(typesByName)
 	}
 	r.typesByName[name] = typ
+	*counter++
 	return nil
 }
 
-func (r *Types) update(_ string, desc protoreflect.Descriptor, typ interface{}) error {
+func (r *Types) update(_ string, desc protoreflect.Descriptor, typ interface{}, counter *int) error {
 	name := desc.FullName()
 	if r.typesByName == nil {
 		r.typesByName = make(typesByName)
+	}
+	if r.typesByName[name] == nil {
+		*counter++
 	}
 	r.typesByName[name] = typ
 	return nil
