@@ -55,7 +55,7 @@ var ignoreConflict = func(d protoreflect.Descriptor, err error) bool {
 	case "panic":
 		panic(fmt.Sprintf("%v\nSee %v\n", err, faq))
 	case "warn":
-		fmt.Fprintf(os.Stderr, "WARNING: %v\nSee %v\n\n", err, faq)
+		_, _ = fmt.Fprintf(os.Stderr, "WARNING: %v\nSee %v\n\n", err, faq)
 		return true
 	case "ignore":
 		return true
@@ -67,11 +67,11 @@ var ignoreConflict = func(d protoreflect.Descriptor, err error) bool {
 var globalMutex sync.RWMutex
 
 // GlobalFiles is a global registry of file descriptors.
-var GlobalFiles *Files = new(Files)
+var GlobalFiles = new(Files)
 
 // GlobalTypes is the registry used by default for type lookups
 // unless a local registry is provided by the user.
-var GlobalTypes *Types = new(Types)
+var GlobalTypes = new(Types)
 
 // NotFound is a sentinel error value to indicate that the type was not found.
 //
@@ -303,7 +303,7 @@ func (s *nameSuffix) Pop() (name protoreflect.Name) {
 	if i := strings.IndexByte(string(*s), '.'); i >= 0 {
 		name, *s = protoreflect.Name((*s)[:i]), (*s)[i+1:]
 	} else {
-		name, *s = protoreflect.Name((*s)), ""
+		name, *s = protoreflect.Name(*s), ""
 	}
 	return name
 }
@@ -453,7 +453,7 @@ type MessageTypeResolver interface {
 //
 // The [Types] type implements this interface.
 type ExtensionTypeResolver interface {
-	// FindExtensionByName looks up a extension field by the field's full name.
+	// FindExtensionByName looks up an extension field by the field's full name.
 	// Note that this is the full name of the field as determined by
 	// where the extension is declared and is unrelated to the full name of the
 	// message being extended.
@@ -461,7 +461,7 @@ type ExtensionTypeResolver interface {
 	// This returns (nil, NotFound) if not found.
 	FindExtensionByName(field protoreflect.FullName) (protoreflect.ExtensionType, error)
 
-	// FindExtensionByNumber looks up a extension field by the field number
+	// FindExtensionByNumber looks up an extension field by the field number
 	// within some parent message, identified by full name.
 	//
 	// This returns (nil, NotFound) if not found.
@@ -490,10 +490,12 @@ type (
 	extensionsByNumber  map[protoreflect.FieldNumber]protoreflect.ExtensionType
 )
 
+type registerFunc = func(string, protoreflect.Descriptor, interface{}) error
+
 // RegisterMessage registers the provided message type.
 //
 // If a naming conflict occurs, the type is not registered and an error is returned.
-func (r *Types) RegisterMessage(mt protoreflect.MessageType) error {
+func (r *Types) registerMessage(mt protoreflect.MessageType, register registerFunc) error {
 	// Under rare circumstances getting the descriptor might recursively
 	// examine the registry, so fetch it before locking.
 	md := mt.Descriptor()
@@ -503,17 +505,25 @@ func (r *Types) RegisterMessage(mt protoreflect.MessageType) error {
 		defer globalMutex.Unlock()
 	}
 
-	if err := r.register("message", md, mt); err != nil {
+	if err := register("message", md, mt); err != nil {
 		return err
 	}
 	r.numMessages++
 	return nil
 }
 
+func (r *Types) RegisterMessage(mt protoreflect.MessageType) error {
+	return r.registerMessage(mt, r.register)
+}
+
+func (r *Types) UpdateMessage(mt protoreflect.MessageType) error {
+	return r.registerMessage(mt, r.update)
+}
+
 // RegisterEnum registers the provided enum type.
 //
 // If a naming conflict occurs, the type is not registered and an error is returned.
-func (r *Types) RegisterEnum(et protoreflect.EnumType) error {
+func (r *Types) registerEnum(et protoreflect.EnumType, register registerFunc) error {
 	// Under rare circumstances getting the descriptor might recursively
 	// examine the registry, so fetch it before locking.
 	ed := et.Descriptor()
@@ -523,17 +533,25 @@ func (r *Types) RegisterEnum(et protoreflect.EnumType) error {
 		defer globalMutex.Unlock()
 	}
 
-	if err := r.register("enum", ed, et); err != nil {
+	if err := register("enum", ed, et); err != nil {
 		return err
 	}
 	r.numEnums++
 	return nil
 }
 
+func (r *Types) RegisterEnum(et protoreflect.EnumType) error {
+	return r.registerEnum(et, r.register)
+}
+
+func (r *Types) UpdateEnum(et protoreflect.EnumType) error {
+	return r.registerEnum(et, r.update)
+}
+
 // RegisterExtension registers the provided extension type.
 //
 // If a naming conflict occurs, the type is not registered and an error is returned.
-func (r *Types) RegisterExtension(xt protoreflect.ExtensionType) error {
+func (r *Types) registerExtension(xt protoreflect.ExtensionType, register registerFunc) error {
 	// Under rare circumstances getting the descriptor might recursively
 	// examine the registry, so fetch it before locking.
 	//
@@ -556,7 +574,7 @@ func (r *Types) RegisterExtension(xt protoreflect.ExtensionType) error {
 		}
 	}
 
-	if err := r.register("extension", xd, xt); err != nil {
+	if err := register("extension", xd, xt); err != nil {
 		return err
 	}
 	if r.extensionsByMessage == nil {
@@ -570,6 +588,14 @@ func (r *Types) RegisterExtension(xt protoreflect.ExtensionType) error {
 	return nil
 }
 
+func (r *Types) RegisterExtension(xt protoreflect.ExtensionType) error {
+	return r.registerExtension(xt, r.register)
+}
+
+func (r *Types) UpdateExtension(xt protoreflect.ExtensionType) error {
+	return r.registerExtension(xt, r.update)
+}
+
 func (r *Types) register(kind string, desc protoreflect.Descriptor, typ interface{}) error {
 	name := desc.FullName()
 	prev := r.typesByName[name]
@@ -580,6 +606,15 @@ func (r *Types) register(kind string, desc protoreflect.Descriptor, typ interfac
 			return err
 		}
 	}
+	if r.typesByName == nil {
+		r.typesByName = make(typesByName)
+	}
+	r.typesByName[name] = typ
+	return nil
+}
+
+func (r *Types) update(_ string, desc protoreflect.Descriptor, typ interface{}) error {
+	name := desc.FullName()
 	if r.typesByName == nil {
 		r.typesByName = make(typesByName)
 	}
@@ -657,7 +692,7 @@ func (r *Types) FindMessageByURL(url string) (protoreflect.MessageType, error) {
 	return nil, NotFound
 }
 
-// FindExtensionByName looks up a extension field by the field's full name.
+// FindExtensionByName looks up an extension field by the field's full name.
 // Note that this is the full name of the field as determined by
 // where the extension is declared and is unrelated to the full name of the
 // message being extended.
@@ -700,7 +735,7 @@ func (r *Types) FindExtensionByName(field protoreflect.FullName) (protoreflect.E
 	return nil, NotFound
 }
 
-// FindExtensionByNumber looks up a extension field by the field number
+// FindExtensionByNumber looks up an extension field by the field number
 // within some parent message, identified by full name.
 //
 // This returns (nil, [NotFound]) if not found.
