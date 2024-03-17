@@ -192,15 +192,25 @@ func (r *Files) UpdateFile(file protoreflect.FileDescriptor) error {
 		}
 	}
 	p := r.descsByName[file.Package()].(*packageDescriptor)
-	p.files = append(p.files, file)
+	exists := false
+	for i, f := range p.files {
+		if f.Path() == file.Path() {
+			exists = true
+			p.files[i] = file
+			break
+		}
+	}
+	if !exists {
+		p.files = append(p.files, file)
+	}
 	rangeTopLevelDescriptors(file, func(d protoreflect.Descriptor) {
 		r.descsByName[d.FullName()] = d
 	})
 	path := file.Path()
 	if prev := r.filesByPath[path]; len(prev) == 0 {
 		r.numFiles++
+		r.filesByPath[path] = append(r.filesByPath[path], file)
 	}
-	r.filesByPath[path] = append(r.filesByPath[path], file)
 	return nil
 }
 
