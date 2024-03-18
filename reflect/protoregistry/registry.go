@@ -174,7 +174,7 @@ func (r *Files) RegisterFile(file protoreflect.FileDescriptor) error {
 
 func (r *Files) UpdateFile(file protoreflect.FileDescriptor) error {
 	r.mutex.Lock()
-	r.mutex.Unlock()
+	defer r.mutex.Unlock()
 	if r.descsByName == nil {
 		r.descsByName = map[protoreflect.FullName]interface{}{
 			"": &packageDescriptor{},
