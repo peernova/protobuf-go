@@ -2,10 +2,6 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-// Go native fuzzing was added in go1.18. Remove this once we stop supporting
-// go1.17.
-//go:build go1.18
-
 package proto_test
 
 import (
@@ -18,22 +14,6 @@ import (
 
 	testfuzzpb "google.golang.org/protobuf/internal/testprotos/editionsfuzztest"
 )
-
-func TestUnmarshalInvalidGroupField(t *testing.T) {
-	in := []byte("\x82\x01\x010")
-	// Test proto2 proto
-	proto2Proto := &testfuzzpb.TestAllTypesProto2{}
-
-	if err := proto.Unmarshal(in, proto2Proto); err != nil {
-		t.Error(err)
-	}
-	// Test equivalent editions proto
-	editionsProto := &testfuzzpb.TestAllTypesProto2Editions{}
-
-	if err := proto.Unmarshal(in, editionsProto); err != nil {
-		t.Error(err)
-	}
-}
 
 // compareEquivalentProtos compares equivalent messages m0 and m1, where one is
 // typically a Protobuf Editions message and the other isn't. It unmarshals the
@@ -87,6 +67,7 @@ func compareEquivalentProtos(t *testing.T, wireBytes []byte, m0, m1 proto.Messag
 
 func FuzzProto2EditionConversion(f *testing.F) {
 	f.Add([]byte("Hello World!"))
+	f.Add([]byte("\x82\x01\x010"))
 	f.Fuzz(func(t *testing.T, in []byte) {
 		compareEquivalentProtos(t, in, (*testfuzzpb.TestAllTypesProto2)(nil), (*testfuzzpb.TestAllTypesProto2Editions)(nil))
 	})
@@ -94,6 +75,7 @@ func FuzzProto2EditionConversion(f *testing.F) {
 
 func FuzzProto3EditionConversion(f *testing.F) {
 	f.Add([]byte("Hello World!"))
+	f.Add([]byte("\x82\x01\x010"))
 	f.Fuzz(func(t *testing.T, in []byte) {
 		compareEquivalentProtos(t, in, (*testfuzzpb.TestAllTypesProto3)(nil), (*testfuzzpb.TestAllTypesProto3Editions)(nil))
 	})

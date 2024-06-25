@@ -93,7 +93,7 @@ type Files struct {
 	// multiple files. Only top-level declarations are registered.
 	// Note that enum values are in the top-level since that are in the same
 	// scope as the parent enum.
-	descsByName map[protoreflect.FullName]interface{}
+	descsByName map[protoreflect.FullName]any
 	filesByPath map[string][]protoreflect.FileDescriptor
 	numFiles    int
 	mutex       sync.RWMutex
@@ -114,7 +114,7 @@ func (r *Files) RegisterFile(file protoreflect.FileDescriptor) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	if r.descsByName == nil {
-		r.descsByName = map[protoreflect.FullName]interface{}{
+		r.descsByName = map[protoreflect.FullName]any{
 			"": &packageDescriptor{},
 		}
 		r.filesByPath = make(map[string][]protoreflect.FileDescriptor)
@@ -176,7 +176,7 @@ func (r *Files) UpdateFile(file protoreflect.FileDescriptor) error {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
 	if r.descsByName == nil {
-		r.descsByName = map[protoreflect.FullName]interface{}{
+		r.descsByName = map[protoreflect.FullName]any{
 			"": &packageDescriptor{},
 		}
 		r.filesByPath = make(map[string][]protoreflect.FileDescriptor)
@@ -505,12 +505,12 @@ type Types struct {
 }
 
 type (
-	typesByName         map[protoreflect.FullName]interface{}
+	typesByName         map[protoreflect.FullName]any
 	extensionsByMessage map[protoreflect.FullName]extensionsByNumber
 	extensionsByNumber  map[protoreflect.FieldNumber]protoreflect.ExtensionType
 )
 
-type registerFunc = func(string, protoreflect.Descriptor, interface{}, *int) error
+type registerFunc = func(string, protoreflect.Descriptor, any, *int) error
 
 // RegisterMessage registers the provided message type.
 //
@@ -601,7 +601,7 @@ func (r *Types) UpdateExtension(xt protoreflect.ExtensionType) error {
 	return r.registerExtension(xt, r.update, true)
 }
 
-func (r *Types) register(kind string, desc protoreflect.Descriptor, typ interface{}, counter *int) error {
+func (r *Types) register(kind string, desc protoreflect.Descriptor, typ any, counter *int) error {
 	name := desc.FullName()
 	prev := r.typesByName[name]
 	if prev != nil {
@@ -619,7 +619,7 @@ func (r *Types) register(kind string, desc protoreflect.Descriptor, typ interfac
 	return nil
 }
 
-func (r *Types) update(_ string, desc protoreflect.Descriptor, typ interface{}, counter *int) error {
+func (r *Types) update(_ string, desc protoreflect.Descriptor, typ any, counter *int) error {
 	name := desc.FullName()
 	if r.typesByName == nil {
 		r.typesByName = make(typesByName)
@@ -859,7 +859,7 @@ func (r *Types) RangeExtensionsByMessage(message protoreflect.FullName, f func(p
 	}
 }
 
-func typeName(t interface{}) string {
+func typeName(t any) string {
 	switch t.(type) {
 	case protoreflect.EnumType:
 		return "enum"
@@ -872,7 +872,7 @@ func typeName(t interface{}) string {
 	}
 }
 
-func amendErrorWithCaller(err error, prev, curr interface{}) error {
+func amendErrorWithCaller(err error, prev, curr any) error {
 	prevPkg := goPackage(prev)
 	currPkg := goPackage(curr)
 	if prevPkg == "" || currPkg == "" || prevPkg == currPkg {
@@ -881,7 +881,7 @@ func amendErrorWithCaller(err error, prev, curr interface{}) error {
 	return errors.New("%s\n\tpreviously from: %q\n\tcurrently from:  %q", err, prevPkg, currPkg)
 }
 
-func goPackage(v interface{}) string {
+func goPackage(v any) string {
 	switch d := v.(type) {
 	case protoreflect.EnumType:
 		v = d.Descriptor()
